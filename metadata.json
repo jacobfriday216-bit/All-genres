@@ -1,0 +1,6 @@
+{
+  "name": "ALL GENRES - Entertainment News, Music, Movies & Pop Culture",
+  "description": "Premier entertainment news magazine covering music artists, Nollywood, Hollywood, celebrity biographies, movies, and pop culture.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

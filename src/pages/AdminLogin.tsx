@@ -1,0 +1,323 @@
+import React, { useState, useEffect } from 'react';
+import { ShieldCheck, Lock, Mail, KeyRound, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Logo } from '../components/Logo';
+
+interface AdminLoginProps {
+  onLoginSuccess: (token: string, user: { email: string; name: string; role: string }) => void;
+  onBackToSite: () => void;
+}
+
+export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess, onBackToSite }) => {
+  const [isConfigured, setIsConfigured] = useState<boolean | null>(null);
+  const [adminEmail, setAdminEmail] = useState('jacobfriday216@gmail.com');
+  const [emailInput, setEmailInput] = useState('jacobfriday216@gmail.com');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [mode, setMode] = useState<'login' | 'setup' | 'forgot'>('login');
+
+  useEffect(() => {
+    checkStatus();
+  }, []);
+
+  const checkStatus = async () => {
+    try {
+      const res = await fetch('/api/auth/status');
+      if (res.ok) {
+        const data = await res.json();
+        setIsConfigured(data.isConfigured);
+        if (data.adminEmail) {
+          setAdminEmail(data.adminEmail);
+          setEmailInput(data.adminEmail);
+        }
+        if (!data.isConfigured) {
+          setMode('setup');
+        } else {
+          setMode('login');
+        }
+      }
+    } catch {
+      setIsConfigured(true);
+      setMode('login');
+    }
+  };
+
+  const handleSetup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccessMsg(null);
+
+    if (password.length < 8) {
+      setError('Password must contain at least 8 characters.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match. Please re-enter.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/setup-admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: emailInput.trim(),
+          password,
+          confirmPassword
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to setup master administrator password.');
+      }
+
+      setSuccessMsg('Master password established successfully! Logging you in...');
+      setTimeout(() => {
+        onLoginSuccess(data.token, data.user);
+      }, 800);
+    } catch (err: any) {
+      setError(err.message || 'Setup failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    try {
+      const res = await fetch('/api/auth/admin-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: emailInput.trim(),
+          password
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.needsSetup) {
+          setMode('setup');
+        }
+        throw new Error(data.error || 'Invalid administrator credentials');
+      }
+
+      onLoginSuccess(data.token, data.user);
+    } catch (err: any) {
+      setError(err.message || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-zinc-950 flex flex-col justify-center items-center p-4">
+      <div className="w-full max-w-md">
+        {/* Brand Header */}
+        <div className="text-center mb-8">
+          <div className="flex justify-center mb-4">
+            <Logo size="lg" light showTagline={false} />
+          </div>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-amber-400 text-xs font-bold uppercase tracking-widest shadow-inner">
+            <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
+            Executive Admin Control
+          </div>
+        </div>
+
+        {/* Card Box */}
+        <div className="rounded-2xl bg-zinc-900/90 border border-zinc-800 p-8 shadow-2xl backdrop-blur-md">
+          {error && (
+            <div className="mb-6 p-3.5 rounded-xl bg-red-950/70 border border-red-800 text-xs text-red-200 flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {successMsg && (
+            <div className="mb-6 p-3.5 rounded-xl bg-emerald-950/70 border border-emerald-800 text-xs text-emerald-200 flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+              <span>{successMsg}</span>
+            </div>
+          )}
+
+          {mode === 'setup' && (
+            <div>
+              <div className="mb-6">
+                <h2 className="text-lg font-black text-white">Master Account Initial Setup</h2>
+                <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                  Welcome, <strong>{adminEmail}</strong>. Since this is your first time accessing the ALL GENRES console, please establish your personal administrator password.
+                </p>
+              </div>
+
+              <form onSubmit={handleSetup} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                    Administrator Email
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 absolute left-3 top-3 text-zinc-500" />
+                    <input
+                      type="email"
+                      disabled
+                      value={emailInput}
+                      className="w-full pl-9 pr-3 py-2.5 text-xs bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-400 cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                    Create Master Password (min 8 chars)
+                  </label>
+                  <div className="relative">
+                    <KeyRound className="w-4 h-4 absolute left-3 top-3 text-zinc-500" />
+                    <input
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter strong password"
+                      className="w-full pl-9 pr-3 py-2.5 text-xs bg-zinc-950 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-red-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                    Confirm Master Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 absolute left-3 top-3 text-zinc-500" />
+                    <input
+                      type="password"
+                      required
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Confirm password"
+                      className="w-full pl-9 pr-3 py-2.5 text-xs bg-zinc-950 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-red-500"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-white font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-50 cursor-pointer shadow-lg mt-2 flex items-center justify-center gap-2"
+                >
+                  <span>{loading ? 'Securing Account...' : 'Save Password & Enter Dashboard'}</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </form>
+            </div>
+          )}
+
+          {mode === 'login' && (
+            <div>
+              <div className="mb-6">
+                <h2 className="text-lg font-black text-white">Administrator Sign In</h2>
+                <p className="text-xs text-zinc-400 mt-1">
+                  Authenticate to publish articles, configure Monetag, verify Google Search Console, and manage site settings.
+                </p>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                    Admin Email Address
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 absolute left-3 top-3 text-zinc-500" />
+                    <input
+                      type="email"
+                      required
+                      value={emailInput}
+                      onChange={(e) => setEmailInput(e.target.value)}
+                      placeholder="admin@allgenres.media"
+                      className="w-full pl-9 pr-3 py-2.5 text-xs bg-zinc-950 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-red-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-zinc-300">Password</label>
+                    <button
+                      type="button"
+                      onClick={() => setMode('forgot')}
+                      className="text-[11px] text-amber-400 hover:underline cursor-pointer"
+                    >
+                      Reset Password?
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 absolute left-3 top-3 text-zinc-500" />
+                    <input
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full pl-9 pr-3 py-2.5 text-xs bg-zinc-950 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-red-500"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-50 cursor-pointer shadow-lg mt-2 flex items-center justify-center gap-2"
+                >
+                  <span>{loading ? 'Verifying Credentials...' : 'Sign In to Console'}</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </form>
+            </div>
+          )}
+
+          {mode === 'forgot' && (
+            <div className="space-y-4">
+              <h2 className="text-lg font-black text-white">Administrator Account Recovery</h2>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                As the designated master owner (<strong>{adminEmail}</strong>), your recovery instruction is linked directly to your server installation.
+              </p>
+              <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 space-y-2">
+                <p>
+                  To reset your password if forgotten, you can also re-trigger the initial password configuration wizard directly from this setup gate.
+                </p>
+              </div>
+              <button
+                onClick={() => setMode('setup')}
+                className="w-full py-2.5 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/30 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Reset Password for {adminEmail}
+              </button>
+              <button
+                onClick={() => setMode('login')}
+                className="w-full py-2 text-xs text-zinc-400 hover:text-white"
+              >
+                Back to Sign In
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Back Link */}
+        <div className="mt-6 text-center">
+          <button
+            onClick={onBackToSite}
+            className="text-xs text-zinc-400 hover:text-white transition-colors cursor-pointer"
+          >
+            ← Return to ALL GENRES Public Website
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
