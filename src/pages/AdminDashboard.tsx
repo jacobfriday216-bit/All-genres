@@ -29,13 +29,17 @@ import {
   X,
   Menu,
   Layers,
-  Filter
+  Filter,
+  Database
 } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { SmartLinkModal } from '../components/SmartLinkModal';
 import { ArticleEditor } from '../components/ArticleEditor';
 import { FullArticlePreview } from '../components/FullArticlePreview';
 import { CategoryManager } from '../components/CategoryManager';
+import { SupabaseManager } from '../components/SupabaseManager';
+import { isSupabaseConfigured } from '../lib/supabase';
+import { dataService } from '../services/dataService';
 import { Article, MonetagConfig, GoogleVerificationConfig, SiteSettings, User, AdminStats } from '../types';
 
 interface AdminDashboardProps {
@@ -55,6 +59,7 @@ type TabType =
   | 'google'
   | 'seo'
   | 'settings'
+  | 'database'
   | 'users'
   | 'security';
 
@@ -154,11 +159,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         setRegisteredUsers(statsData.users || []);
       }
 
-      // Load All Articles (including drafts & scheduled)
-      const artsRes = await fetch('/api/articles?status=all', { headers });
-      if (artsRes.ok) {
-        const artsData = await artsRes.json();
-        setArticles(artsData.articles || []);
+      // Load All Articles (including drafts & scheduled) from shared database
+      const liveArts = await dataService.getArticles('all', token);
+      if (liveArts && liveArts.length > 0) {
+        setArticles(liveArts);
+      } else {
+        const artsRes = await fetch('/api/articles?status=all', { headers });
+        if (artsRes.ok) {
+          const artsData = await artsRes.json();
+          setArticles(artsData.articles || []);
+        }
       }
 
       // Load Media
@@ -310,10 +320,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     targetStatus: 'published' | 'draft' | 'scheduled'
   ) => {
     const isCreate = isNewArticle || !articleData.id;
-    const endpoint = isCreate ? '/api/articles' : `/api/articles/${articleData.id || editingArticle?.id}`;
-    const method = isCreate ? 'POST' : 'PUT';
 
-    const payload = {
+    const payload: Partial<Article> = {
       ...articleData,
       status: targetStatus,
       publishedAt:
@@ -322,38 +330,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           : articleData.publishedAt || new Date().toISOString()
     };
 
-    const res = await fetch(endpoint, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(payload)
-    });
+    try {
+      const savedArticle = await dataService.saveArticle(payload, token);
 
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Failed to save article');
+      if (isCreate) {
+        setArticles((prev) => [savedArticle, ...prev]);
+      } else {
+        setArticles((prev) => prev.map((a) => (a.id === savedArticle.id ? savedArticle : a)));
+      }
+
+      setEditingArticle(null);
+      await loadAllData();
+
+      const msg =
+        targetStatus === 'published'
+          ? 'Article successfully published to live website and cloud database!'
+          : targetStatus === 'draft'
+          ? 'Article saved as draft successfully!'
+          : 'Article scheduled for future publication!';
+      setSaveStatus(msg);
+      setTimeout(() => setSaveStatus(null), 4000);
+    } catch (err: any) {
+      alert('Failed to save article: ' + err.message);
     }
-
-    const data = await res.json();
-    if (isCreate) {
-      setArticles((prev) => [data.article, ...prev]);
-    } else {
-      setArticles((prev) => prev.map((a) => (a.id === data.article.id ? data.article : a)));
-    }
-
-    setEditingArticle(null);
-    await loadAllData();
-
-    const msg =
-      targetStatus === 'published'
-        ? 'Article successfully published to live website!'
-        : targetStatus === 'draft'
-        ? 'Article saved as draft successfully!'
-        : 'Article scheduled for future publication!';
-    setSaveStatus(msg);
-    setTimeout(() => setSaveStatus(null), 4000);
   };
 
   const handleSaveArticle = async (e: React.FormEvent) => {
@@ -364,28 +363,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
 
     try {
-      const endpoint = isNewArticle ? '/api/articles' : `/api/articles/${editingArticle.id}`;
-      const method = isNewArticle ? 'POST' : 'PUT';
-
-      const res = await fetch(endpoint, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify(editingArticle)
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to save article');
-      }
-
-      const data = await res.json();
+      const saved = await dataService.saveArticle(editingArticle, token);
       if (isNewArticle) {
-        setArticles([data.article, ...articles]);
+        setArticles([saved, ...articles]);
       } else {
-        setArticles(articles.map((a) => (a.id === data.article.id ? data.article : a)));
+        setArticles(articles.map((a) => (a.id === saved.id ? saved : a)));
       }
 
       setEditingArticle(null);
@@ -400,14 +382,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleDeleteArticle = async (id: string) => {
     if (!confirm('Are you sure you want to permanently delete this article?')) return;
     try {
-      const res = await fetch(`/api/articles/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        setArticles(articles.filter((a) => a.id !== id));
-      }
-    } catch {}
+      await dataService.deleteArticle(id, token);
+      setArticles(articles.filter((a) => a.id !== id));
+      setSaveStatus('Article removed from database.');
+      setTimeout(() => setSaveStatus(null), 3000);
+    } catch (err: any) {
+      alert('Delete failed: ' + err.message);
+    }
   };
 
   // Media File Upload Handler
@@ -718,6 +699,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 type="button"
+                onClick={() => switchTab('database')}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-colors cursor-pointer ${
+                  activeTab === 'database'
+                    ? 'bg-red-600 text-white'
+                    : 'text-zinc-300 hover:bg-zinc-900 hover:text-white'
+                }`}
+              >
+                <span className="flex items-center gap-3">
+                  <Database className="w-5 h-5 text-emerald-400" />
+                  Supabase Cloud DB
+                </span>
+                <span className="text-[10px] bg-emerald-950 border border-emerald-800 text-emerald-300 px-2 py-0.5 rounded font-bold">
+                  {isSupabaseConfigured() ? 'Online' : 'Setup'}
+                </span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => switchTab('users')}
                 className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-colors cursor-pointer ${
                   activeTab === 'users'
@@ -921,6 +920,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
             <button
               type="button"
+              onClick={() => switchTab('database')}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer ${
+                activeTab === 'database'
+                  ? 'bg-red-600 text-white'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Database className="w-4 h-4 text-emerald-400" />
+                <span>Supabase Cloud DB</span>
+              </div>
+              <span className={`w-1.5 h-1.5 rounded-full ${isSupabaseConfigured() ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            </button>
+
+            <button
+              type="button"
               onClick={() => switchTab('users')}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer ${
                 activeTab === 'users'
@@ -1005,7 +1020,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   Real-time editorial metrics, database records, monetization toggles, and traffic metrics.
                 </p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => switchTab('database')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors cursor-pointer ${
+                    isSupabaseConfigured()
+                      ? 'bg-emerald-950/70 border-emerald-800 text-emerald-300 hover:bg-emerald-900/60'
+                      : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-800'
+                  }`}
+                  title="Configure Supabase Shared Online Database"
+                >
+                  <Database className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{isSupabaseConfigured() ? 'Supabase Online' : 'Connect Cloud DB'}</span>
+                </button>
                 <button
                   onClick={loadAllData}
                   className="p-2 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 transition-colors cursor-pointer"
@@ -2426,6 +2454,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
           </div>
+        )}
+
+        {/* 11. SUPABASE CLOUD DATABASE & NETLIFY SYNC TAB */}
+        {activeTab === 'database' && (
+          <SupabaseManager />
         )}
 
         {/* SMART LINK PREVIEW MODAL */}

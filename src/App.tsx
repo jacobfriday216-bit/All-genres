@@ -14,6 +14,8 @@ import { SearchView } from './pages/SearchView';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { AdminLogin } from './pages/AdminLogin';
 import { Article, MonetagConfig, SiteSettings, User } from './types';
+import { dataService } from './services/dataService';
+import { authService } from './services/authService';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'home' | 'category' | 'article' | 'search' | 'admin' | 'policy'>('home');
@@ -121,36 +123,24 @@ export default function App() {
   const fetchInitialData = async () => {
     try {
       setLoading(true);
-      const [settingsRes, articlesRes] = await Promise.all([
-        fetch('/api/settings/public'),
-        fetch('/api/articles')
+      const [settingsData, arts] = await Promise.all([
+        dataService.getPublicSettings(),
+        dataService.getArticles('published')
       ]);
 
-      if (settingsRes.ok) {
-        const sData = await settingsRes.json();
-        setPublicSettings(sData);
+      if (settingsData) {
+        setPublicSettings(settingsData);
       }
-
-      if (articlesRes.ok) {
-        const aData = await articlesRes.json();
-        setArticles(aData.articles || []);
-      }
+      setArticles(arts);
 
       // Check current user session if token exists
-      const savedToken = localStorage.getItem('allgenres_admin_token') || localStorage.getItem('allgenres_visitor_token');
+      const savedToken = localStorage.getItem('allgenres_admin_token');
       if (savedToken) {
-        const meRes = await fetch('/api/auth/me', {
-          headers: { Authorization: `Bearer ${savedToken}` }
-        });
-        if (meRes.ok) {
-          const meData = await meRes.json();
-          if (meData.user) {
-            setCurrentUser(meData.user);
-            if (meData.user.role === 'admin') {
-              setAdminUser(meData.user);
-              setAdminToken(savedToken);
-            }
-          }
+        const admin = await authService.getCurrentUser(savedToken);
+        if (admin) {
+          setCurrentUser(admin as any);
+          setAdminUser(admin);
+          setAdminToken(savedToken);
         }
       }
     } catch (err) {
@@ -166,17 +156,12 @@ export default function App() {
       const found = articles.find((a) => a.slug === selectedArticleSlug || a.id === selectedArticleSlug);
       if (found) {
         setCurrentArticle(found);
-      } else {
-        // Fetch from API to increment views
-        fetch(`/api/articles/${selectedArticleSlug}`)
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.article) {
-              setCurrentArticle(data.article);
-            }
-          })
-          .catch(() => {});
       }
+      dataService.getArticleBySlug(selectedArticleSlug).then((art) => {
+        if (art) {
+          setCurrentArticle(art);
+        }
+      }).catch(() => {});
     }
   }, [selectedArticleSlug, articles]);
 
@@ -188,8 +173,8 @@ export default function App() {
     setCurrentView('admin');
   };
 
-  const handleAdminLogout = () => {
-    localStorage.removeItem('allgenres_admin_token');
+  const handleAdminLogout = async () => {
+    await authService.logout();
     setAdminToken(null);
     setAdminUser(null);
     setCurrentUser(null);
